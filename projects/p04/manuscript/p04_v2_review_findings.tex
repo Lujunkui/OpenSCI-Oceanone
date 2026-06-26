@@ -1,0 +1,163 @@
+% !TEX program = pdflatex
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{ctex}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{textcomp}
+
+\definecolor{crit}{HTML}{DC3545}
+\definecolor{high}{HTML}{E67E22}
+\definecolor{mid}{HTML}{F39C12}
+\definecolor{low}{HTML}{27AE60}
+
+\hypersetup{colorlinks=true, linkcolor=black, urlcolor=blue}
+
+\newcommand{\severity}[2]{\textcolor{#1}{\textbf{#2}}}
+\newcommand{\verdict}[1]{\textcolor{blue}{\small[#1]}}
+
+\begin{document}
+
+\title{\textbf{P04 V2 论文与代码交叉验证报告}}
+\author{验证范围：paper.tex vs 13 个 p04v2\_* 分析脚本}
+\date{2026-06-25}
+
+\maketitle
+
+\section*{说明}
+本报告仅收录经过代码可验证的问题。所有结论均可在对应脚本的精确行号中找到证据。
+
+\vspace{0.5cm}
+
+% ===================================================================
+\section{已验证的硬伤（100\% 可复现）}
+% ===================================================================
+
+\subsection*{1. 图形文件名与路径错位}
+
+\begin{tabularx}{\textwidth}{lXX}
+\toprule
+\textbf{论文 \texttt{\textbackslash includegraphics}} & \textbf{脚本实际输出} & \textbf{验证} \\
+\midrule
+\texttt{figures/fig1\_concept} & \texttt{manuscript\_v2/figures/fig1\_concept.png} & \texttt{make\_fig1\_concept.py:144} \\
+\texttt{figures/fig2\_spatial} & \texttt{manuscript\_v2/figures/fig2\_spatial.png} & \texttt{make\_fig\_spatial.py:115} \\
+\texttt{figures/\textcolor{red}{fig1\_baseline}} & \texttt{figures/\textcolor{red}{p04v2\_fig\_nsidc\_baseline}.png} & \texttt{phase0\_nsidc.py:162} \\
+\texttt{figures/\textcolor{red}{fig2\_swh}} & \texttt{figures/\textcolor{red}{p04v2\_fig\_phase1\_swh}.png} & \texttt{phase1\_swh.py:257} \\
+\texttt{figures/\textcolor{red}{fig4\_fetch}} & \texttt{figures/\textcolor{red}{p04v2\_fig\_fetch\_fixed}.png} & \texttt{phase2c\_fetch\_fixed.py:305} \\
+\texttt{figures/\textcolor{red}{fig5\_seasonal\_mwp}} & \texttt{figures/\textcolor{red}{p04v2\_fig\_revision\_step2}.png} & \texttt{revision\_step2.py:244} \\
+\bottomrule
+\end{tabularx}
+
+\textbf{后果：} 前 2 张图在 manuscript\_v2/ 下，后 4 张在 projects/p04/figures/ 下且文件名不同。\textbf{LaTeX 编译直接报错找不到文件。}
+
+\textbf{修复方式：} 统一文件名，让脚本输出和 tex 引用一致。
+
+\subsection*{2. 核心数值「波能量通量+2.4\%」无对应计算脚本}
+
+论文结论多次引用：
+\[
+P = \rho g^2 H_s^2 T_p / 64\pi,\quad 46.1 \rightarrow 47.2\ \text{kW/m}\;(+2.4\%)
+\]
+
+搜索全部 13 个 V2 脚本（使用关键词 \texttt{kw}, \texttt{energy flux}, \texttt{64pi}）：
+\begin{itemize}
+\item \texttt{p04v2\_phase1\_swh.py}——计算 SWH 趋势和 Pettitt，\textbf{无能量通量}
+\item \texttt{p04v2\_revision\_step2.py}——计算 MWP 和季节性 Granger，\textbf{无能量通量}
+\item 其余 11 个脚本——\textbf{均不包含该计算}
+\end{itemize}
+
+此公式的计算仅存在于 AI 对话中，无独立可复现代码。
+
+\subsection*{3. Pettitt p-value 部分脚本未限幅}
+
+\texttt{p04v2\_phase0\_nsidc.py:36} 和 \texttt{p04v2\_phase1\_swh.py:36}：
+
+\begin{verbatim}
+p = 2 * exp(-6 * K**2 / (n**3 + n**2))    # 缺少 min(p, 1.0)
+\end{verbatim}
+
+当 $K$ 很小时 $p$ 会大于 1（例如 $K=1, n=46 \Rightarrow p \approx 1.97$）。\texttt{phase2b} 和 \texttt{phase2c} 已用 \texttt{min(p, 1.0)} 修复，但 baseline 和 SWH 脚本未修复。
+
+\subsection*{4. 同一数据出现两个样本量——550 vs 552 个月}
+
+\begin{itemize}
+\item 第 57 行：\texttt{1979--2024 (552 months)}——$46\times12=552$，正确
+\item 第 158 行：\texttt{r = 0.136, p = 0.001, n = 550 months}——少了 2 个月，未解释原因
+\end{itemize}
+
+可能的原因是 SWH 和 NSIDC 的时间轴不完全对齐导致 2 个月被剔除，但论文未注明。
+
+\subsection*{5. NSIDC 数据可用年份声明错误}
+
+第 66 行原文：\texttt{We use daily NSIDC sea-ice concentration data (1979--2026) \ldots}
+
+\begin{itemize}
+\item NSIDC 数据实际仅覆盖到 \textbf{2024 年}（提交时最新可用数据）
+\item 论文声称的数据范围 \textbf{1979--2026} 涵盖了未来 2 年不存在的数据
+\item 所有分析在 2024 年截止（与 552 个月 / 46 年一致）
+\end{itemize}
+
+此声明若被审稿人发现，会严重损害数据可信度。应改为 \texttt{1979--2024}。
+
+\subsection*{6. 图形文件编号命名混乱}
+
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{文件名} & \textbf{问题} \\
+\midrule
+\texttt{fig1\_concept} + \texttt{fig1\_baseline} & 两个文件共用 \texttt{fig1\_} 前缀 \\
+\texttt{fig2\_spatial} + \texttt{fig2\_swh} & 两个文件共用 \texttt{fig2\_} 前缀 \\
+\texttt{fig3\_*} & 完全缺失 \\
+\texttt{fig4\_fetch} + \texttt{fig5\_seasonal\_mwp} & 跳过了 fig3 \\
+\bottomrule
+\end{tabularx}
+
+此外第 172--173 行注释引用已删除的"Fig. 3"和不存在的"A06 commit"，属于清理不彻底。
+
+% ===================================================================
+\section{需要进一步确认的问题}
+% ===================================================================
+
+以下问题在报告中标注为潜在问题，但属于判断性而非确定性错误，供参考：
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{双重 Bonferroni：} 论文将季节分析（4 检验）的 Bonferroni 与主分析（6 检验）分开做。统计上更严格的做法是 10 检验一起校正（冬季 $p=0.007\times10=0.07$）。但论文正文已注明 seasonal 分析是"hypothesis-generating framework"，并非明确错误，属于审稿人可能挑剔的点。
+
+\item \textbf{MWP=9.0s 作为涌浪证据：} 南大洋的当地风浪在极端风区下也可以达到 8--9\,s。单纯靠平均周期区分涌浪和风浪不如谱分区可靠。但这是一个保守 vs 激进的判断问题，不是硬伤。
+
+\item \textbf{Pettitt O(n³) 效率：} V1 代码评审中提过此问题。562 个月数据的三重循环在纯 Python 中约需 5600 万次 sign() 调用。可优化但结果不受影响。
+\end{enumerate}
+
+% ===================================================================
+\section{优先级建议}
+% ===================================================================
+
+\begin{tabularx}{\textwidth}{lXXc}
+\toprule
+\textbf{优先级} & \textbf{问题} & \textbf{操作} & \textbf{工作量} \\
+\midrule
+P0 & 图形文件名 & 统一脚本输出与论文引用 & 10 min \\
+P1 & 波能量通量无代码 & 补写一个计算脚本 & 15 min \\
+P1 & Pettitt p 值限幅 & phase0/phase1 加 min(p, 1.0) & 2 min \\
+P2 & 550 vs 552 & 加一句注释说明 & 1 min \\
+P2 & NSIDC 年份声明 & 1979--2026 改为 1979--2024 & 1 min \\
+P2 & 图形编号清理 & 重新编号、删注释 & 5 min \\
+\bottomrule
+\end{tabularx}
+
+\vspace{0.8cm}
+\begin{center}
+\fbox{\parbox{0.85\textwidth}{\centering
+\textbf{最紧急：}\\[4pt]
+1. 统一图形文件名——不改 LaTeX 就不能编译 \\[2pt]
+2. 补一个波能量通量的计算脚本——核心结论的可复现性
+}}
+\end{center}
+
+\end{document}
